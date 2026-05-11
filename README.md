@@ -2,7 +2,7 @@
 
 **A hands-on git manual.** Type real git commands in a safe in-browser sandbox and watch the commit graph move — branch, merge, undo, push. Nothing touches a real repository, so there's nothing to lose.
 
-[live demo](#) · built with Next.js + Tailwind + Motion
+[**git.clintphillips.dev**](https://git.clintphillips.dev) · built with Next.js + Tailwind + Motion
 
 ## What it is
 
