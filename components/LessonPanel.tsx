@@ -223,7 +223,7 @@ function SandboxBody({ allDone }: { allDone: boolean }) {
       <div className="mt-3 space-y-3 text-[13.5px] leading-relaxed text-ink-text/90">
         <p>
           {allDone ? "You finished the manual — nice. " : ""}
-          This is yours. No steps, no checks, nothing to lose. Branch wildly. <code className="prose-paper">git merge</code> things. <code className="prose-paper">git reset --hard</code> and then <code className="prose-paper">git reflog</code> your way back. Set up a fake <code className="prose-paper">origin</code> and <code className="prose-paper">git push</code>. The graph on the right and the readout below update live.
+          This is yours. No steps, no checks, nothing to lose. Branch wildly. <code className="prose-paper">git merge</code> things. <code className="prose-paper">git reset --hard</code> and then <code className="prose-paper">git reflog</code> your way back. <code className="prose-paper">git stash</code> a mess, <code className="prose-paper">git cherry-pick</code> a commit, set up a fake <code className="prose-paper">origin</code> and <code className="prose-paper">git push</code>. The graph on the right and the readout below update live.
         </p>
         <p className="text-ink-text-dim">
           Everything here is the <em>real</em> git command surface — the same words work in a real terminal. The difference is just the blast radius: zero.

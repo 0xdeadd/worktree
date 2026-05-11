@@ -11,7 +11,7 @@ const KIND_CLASS: Record<OutKind, string> = {
   note: "text-slate",
 };
 
-const GIT_SUBS = ["init", "status", "add", "commit", "log", "branch", "checkout", "switch", "merge", "tag", "reset", "restore", "revert", "reflog", "diff", "remote", "push", "pull", "config", "rm"];
+const GIT_SUBS = ["init", "status", "add", "commit", "log", "branch", "checkout", "switch", "merge", "tag", "reset", "restore", "revert", "cherry-pick", "stash", "reflog", "diff", "remote", "push", "pull", "fetch", "config", "rm"];
 
 export function Terminal({
   lines,

@@ -95,6 +95,7 @@ export class GitRepo {
   index: Record<string, string> = {}; // staged tree
   workdir: Record<string, string> = {}; // working directory
   reflog: ReflogEntry[] = [];
+  stash: { index: Record<string, string>; workdir: Record<string, string>; message: string }[] = []; // stash@{0} == index 0
   seq = 0;
   userName = "you";
   userEmail = "you@example.com";
@@ -113,6 +114,7 @@ export class GitRepo {
       index: this.index,
       workdir: this.workdir,
       reflog: this.reflog,
+      stash: this.stash,
       seq: this.seq,
       userName: this.userName,
       userEmail: this.userEmail,
@@ -722,6 +724,38 @@ export class GitRepo {
         return out([{ text: `[${br ?? "detached"} ${newOid}] ${msg}`, kind: "ok" }], true);
       }
 
+      // ---- cherry-pick ---------------------------------------------------
+      case "cherry-pick": {
+        const t = pos[0];
+        const oid = t ? this.resolveRef(t) : null;
+        if (!oid) return err("usage: git cherry-pick <commit>");
+        const target = this.commits[oid];
+        const parent = target.parents[0] ? this.commits[target.parents[0]] : null;
+        const cur = this.headOid();
+        if (!cur) return err("fatal: no commit to cherry-pick onto");
+        if (this.isDirty()) return err("error: your local changes would be overwritten — commit or stash them first");
+        // apply just the change `target` introduced (parent → target) on top of HEAD
+        const base = parent?.tree ?? {};
+        const tree = { ...this.commits[cur].tree };
+        for (const f of new Set([...Object.keys(base), ...Object.keys(target.tree)])) {
+          const inBase = f in base;
+          const inTarget = f in target.tree;
+          if (inBase && inTarget && base[f] === target.tree[f]) continue; // target didn't touch this file
+          if (inTarget) tree[f] = target.tree[f];
+          else delete tree[f];
+        }
+        if (JSON.stringify(tree) === JSON.stringify(this.commits[cur].tree)) return out([`The previous cherry-pick is now empty (its changes are already present).`]);
+        const newOid = shortHash(this.all());
+        this.commits[newOid] = { oid: newOid, message: target.message, parents: [cur], tree, author: this.userName, time: Date.now() + this.seq, seq: this.seq++ };
+        const br = this.headBranch();
+        if (br) this.refs[br] = newOid;
+        else this.head = { type: "detached", oid: newOid };
+        this.index = { ...tree };
+        this.workdir = { ...tree };
+        this.pushReflog(newOid, "cherry-pick", target.message);
+        return out([{ text: `[${br ?? "detached"} ${newOid}] ${target.message}`, kind: "ok" }], true);
+      }
+
       // ---- reflog --------------------------------------------------------
       case "reflog": {
         if (!this.reflog.length) return out(["(reflog is empty)"]);
@@ -807,9 +841,57 @@ export class GitRepo {
       case "clone":
         return err("this sandbox starts from `git init`, not `git clone` — there's nothing to clone yet. Try `git init`.");
 
-      // ---- stash (minimal stub) -----------------------------------------
-      case "stash":
-        return err("`git stash` isn't simulated here yet — for now, commit your work or use `git restore .` to discard it.");
+      // ---- stash ---------------------------------------------------------
+      case "stash": {
+        const act = pos[0] && !pos[0].startsWith("-") ? pos[0] : "push";
+        if (act === "list") {
+          if (!this.stash.length) return out(["(no stash entries)"]);
+          return out(this.stash.map((s, i) => `stash@{${i}}: ${s.message}`));
+        }
+        if (act === "clear") {
+          this.stash = [];
+          return out(["(all stash entries cleared)"], true);
+        }
+        if (act === "drop") {
+          if (!this.stash.length) return err("No stash entries found.");
+          const dropped = this.stash.shift()!;
+          return out([`Dropped stash@{0} (${dropped.message})`], true);
+        }
+        if (act === "push" || act === "save") {
+          const inclU = a.includes("-u") || a.includes("--include-untracked") || a.includes("-a") || a.includes("--all");
+          const mIdx = a.findIndex((x) => x === "-m" || x === "--message");
+          const msg = mIdx !== -1 && a[mIdx + 1] ? a[mIdx + 1] : `WIP on ${this.headBranch() ?? "detached"}: ${this.headCommit()?.message ?? "(no commits)"}`;
+          const stat = this.status();
+          const trackedDirty = stat.staged.length > 0 || stat.notStaged.length > 0;
+          if (!trackedDirty && !(inclU && stat.untracked.length > 0)) {
+            return err("No local changes to save" + (!inclU && stat.untracked.length ? "\nhint: those files are untracked — `git stash -u` shelves those too" : ""));
+          }
+          const headTree = this.headCommit()?.tree ?? {};
+          this.stash.unshift({ index: { ...this.index }, workdir: { ...this.workdir }, message: msg });
+          const newWorkdir: Record<string, string> = { ...headTree };
+          if (!inclU) for (const f of stat.untracked) newWorkdir[f] = this.workdir[f]; // plain `git stash` leaves untracked files alone
+          this.index = { ...headTree };
+          this.workdir = newWorkdir;
+          return out([{ text: `Saved working directory and index state: ${msg}`, kind: "ok" }, { text: "(tracked changes are shelved — bring them back with `git stash pop`)", kind: "hint" }], true);
+        }
+        if (act === "pop" || act === "apply") {
+          if (!this.stash.length) return err("No stash entries found.");
+          let idx = 0;
+          const ref = pos[1];
+          if (ref) {
+            const m = ref.match(/stash@\{(\d+)\}/) || ref.match(/^(\d+)$/);
+            if (m) idx = parseInt(m[1], 10);
+          }
+          const s = this.stash[idx];
+          if (!s) return err(`fatal: no stash entry at ${ref}`);
+          if (this.isDirty()) return err("error: your local changes would be overwritten — commit them first");
+          this.index = { ...s.index };
+          this.workdir = { ...s.workdir };
+          if (act === "pop") this.stash.splice(idx, 1);
+          return out([{ text: `Restored stash@{${idx}}: ${s.message}${act === "pop" ? "  (and dropped it)" : ""}`, kind: "ok" }], true);
+        }
+        return err(`git stash: unknown subcommand '${act}' — try: push · pop · apply · list · drop · clear`);
+      }
 
       default:
         return err(`git: '${sub}' is not a command this sandbox knows. Try \`help\`.`);
@@ -898,6 +980,8 @@ export const HELP_LINES: OutLine[] = [
   { text: "  git reset [--soft|--hard] <ref>   move the branch (try HEAD~1)", kind: "out" },
   { text: "  git restore [--staged] <file>     undo working-tree / staged changes", kind: "out" },
   { text: "  git revert <commit>            make a new commit that undoes an old one", kind: "out" },
+  { text: "  git cherry-pick <commit>       copy one commit onto the current branch", kind: "out" },
+  { text: "  git stash | stash pop | stash list   shelve / restore uncommitted work", kind: "out" },
   { text: "  git reflog                     every place HEAD has been — your safety net", kind: "out" },
   { text: "  git diff [--staged]            see what changed", kind: "out" },
   { text: "  git remote add origin <url>    point at a (pretend) GitHub remote", kind: "out" },
